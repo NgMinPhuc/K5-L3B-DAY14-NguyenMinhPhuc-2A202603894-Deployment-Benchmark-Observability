@@ -149,7 +149,47 @@ Debug: `docker compose -p k5-day14-docker ps`, `docker logs <container>`, `docke
 
 ## Part 3: Cloud Deployment
 
-_CP6 — pending._
+Theo lớp K5, deploy chính agent Part 6 (`06-lab-complete/`), không deploy app mẫu `03-cloud-deployment/`.
+Chi tiết lệnh và biến môi trường: [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### Exercise 3.1: Railway deployment (nền tảng chính)
+
+- **URL:** https://agent-production-4fa29d22.up.railway.app
+- **Cách deploy:** `cd 06-lab-complete` → `railway init` → `railway add --database redis` → tạo service `agent` với
+  `AGENT_API_KEY` (ngẫu nhiên), `REDIS_URL=${{Redis.REDIS_URL}}`, `ENVIRONMENT=production` → `railway up` → `railway domain`.
+- **Tự kiểm tra (4 lệnh CP6, 2026-11-26 08:52 UTC):**
+
+  ```text
+  GET  /health                 → 200
+  GET  /ready                  → 200   (Redis trên Railway kết nối được)
+  POST /ask  (không có key)    → 401
+  POST /ask  (có X-API-Key)    → 200
+  ```
+
+- **Screenshot:** [dashboard](screenshots/dashboard.png) · [running](screenshots/running.png) · [test](screenshots/test.png)
+
+### Exercise 3.2: So sánh `railway.toml` và `render.yaml`
+
+| Điểm | `railway.toml` | `render.yaml` | Vì sao khác |
+| --- | --- | --- | --- |
+| Phạm vi | Cấu hình **1 service** (build + deploy) | **Blueprint** cả hạ tầng: service `web` + `keyvalue` (Redis) | Railway tạo Redis bằng CLI/dashboard (`railway add --database redis`); Render muốn khai báo mọi thứ trong 1 file IaC |
+| Build | `builder = "DOCKERFILE"`, `dockerfilePath` | `runtime: docker`, `dockerfilePath` | Cùng build từ Dockerfile, chỉ khác cú pháp |
+| Health check | `healthcheckPath = "/health"`, `healthcheckTimeout = 30` | `healthCheckPath: /health` | Cả hai dùng liveness `/health` để quyết định deploy thành công |
+| Restart | `restartPolicyType = "ON_FAILURE"`, tối đa 3 lần | Render tự restart, không khai báo | Railway cho cấu hình policy ngay trong file |
+| Secret | Không nằm trong file; đặt bằng `railway variables` / `railway add --variables` | `AGENT_API_KEY: generateValue: true` (Render tự sinh) | Không file nào chứa giá trị secret, nên commit an toàn |
+| Nối Redis | `REDIS_URL=${{Redis.REDIS_URL}}` (biến tham chiếu, đặt trên platform) | `fromService: {type: keyvalue, property: connectionString}` | Render nối service ngay trong blueprint; Railway nối bằng biến tham chiếu |
+| Env khác | Đặt trên dashboard/CLI | `envVars` khai báo trong file (`ENVIRONMENT`, `RATE_LIMIT_PER_MINUTE`, `DAILY_BUDGET_USD`) | Render ưu tiên config-as-code; Railway ưu tiên CLI |
+
+Railway hợp khi muốn deploy nhanh từ CLI (`railway up` upload thẳng thư mục). Render hợp khi muốn cả hạ tầng
+(web + Redis + secret) nằm trong 1 file review được qua Git.
+
+### Exercise 3.3: Cloud Run CI/CD (đọc `cloudbuild.yaml` + `service.yaml`, không deploy)
+
+1. **Trigger:** push lên `main` → Cloud Build chạy `cloudbuild.yaml`.
+2. **test:** image `python:3.11-slim` cài `requirements.txt` + chạy `pytest tests/`; test fail thì pipeline dừng, không build.
+3. **build → push:** `docker build` gắn 2 tag `:$COMMIT_SHA` và `:latest` (dùng `--cache-from :latest` để tận dụng layer cache), rồi push lên Container Registry `gcr.io/$PROJECT_ID/ai-agent`.
+4. **deploy:** `gcloud run deploy` bằng image `:$COMMIT_SHA` (truy vết được commit) ở `asia-southeast1`, min 1 / max 10 instance, 512Mi / 1 CPU, secret lấy từ Secret Manager (`--set-secrets`), không hardcode.
+5. **`service.yaml`** là IaC (Knative) của service: autoscaling 1–10, `containerConcurrency: 80`, `livenessProbe` → `/health`, `startupProbe` → `/ready`, secret `AGENT_API_KEY` / `OPENAI_API_KEY` từ `secretKeyRef`.
 
 ---
 
@@ -407,5 +447,6 @@ Key design choices:
 | CP3 | Test 401/200/429, giải thích JWT, rate limit, cost guard | Claude Code chạy `04-api-gateway` (cổng 8103), vòng lặp curl tới 429, đọc `cost_guard.py` | Output `curl -i` thật, token đã che; dòng code được trích đúng file |
 | CP4 | Health/readiness, SIGTERM, scale 3 instance | Claude Code chạy app develop (cổng 8104), gửi SIGTERM khi đang có request, chạy compose `--scale agent=3` + `test_stateless.py` | Request vẫn 200 sau SIGTERM; 3 instance luân phiên; history giữ nguyên qua Redis |
 | CP5 | Hoàn thành các TODO trong `06-lab-complete/` | Claude Code viết `config.py`, `auth.py`, `redis_client.py`, `rate_limiter.py` (sorted set Redis), `cost_guard.py` (counter Redis theo ngày), `main.py` (log JSON, `/health`, `/ready`, shutdown), Dockerfile multi-stage non-root, compose, `railway.toml`, `render.yaml` | Chạy `check_production_ready.py` bản đầy đủ (có Docker) → `PASS 12/12`, 43/43 checks; không sửa script chấm |
+| CP6 | Deploy agent Part 6 lên Railway, viết DEPLOYMENT.md, so sánh railway.toml/render.yaml, đọc pipeline Cloud Run | Claude Code chạy Railway CLI (`init`, `add --database redis`, `add --service agent` với biến môi trường, `up`, `domain`), sinh `AGENT_API_KEY` ngẫu nhiên lưu ngoài repo, chụp `running.png`/`test.png` từ output thật bằng Chrome headless | 4 lệnh CP6 trả 200/200/401/200; `check_production_ready.py --public-url` báo Public URL ✅; quét repo không chứa key |
 
 Ghi chú: cổng 8000 trên máy đang bị một process khác dùng nên các bài Part 1–5 chạy ở cổng khác (đã ghi rõ trong từng mục). Docker Hub có lúc trả 429 khi pull image, đã retry.
