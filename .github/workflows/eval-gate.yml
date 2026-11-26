@@ -1,0 +1,50 @@
+name: Eval quality gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "06-lab-complete/benchmark-observability/develop/**"
+  workflow_dispatch:
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: 06-lab-complete/benchmark-observability/develop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: 06-lab-complete/benchmark-observability/develop/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Start agent v2 in background
+        run: |
+          AGENT_VERSION=v2 PORT=8002 MOCK_ERROR_RATE=0 nohup python app.py > agent.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8002/health && exit 0
+            sleep 1
+          done
+          echo "agent did not become healthy"; cat agent.log; exit 1
+
+      # Exit code 1 (accuracy < min or any regression) fails this step and the job,
+      # so the required status check "eval-gate" blocks the merge.
+      - name: Run eval (quality gate)
+        run: |
+          python eval/run_eval.py --url http://localhost:8002 \
+            --min-accuracy 1.0 --retries 3 --out reports/eval_ci.json
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: 06-lab-complete/benchmark-observability/develop/reports/eval_ci.json
