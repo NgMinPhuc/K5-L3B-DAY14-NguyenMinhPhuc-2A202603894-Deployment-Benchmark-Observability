@@ -86,6 +86,19 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
 
 
+@app.get("/")
+def root():
+    """Trang gốc: thông tin service + danh sách endpoint (không lộ cấu hình/secret)."""
+    return {
+        "service": "Production AI Agent",
+        "endpoints": {
+            "GET /health": "liveness",
+            "GET /ready": "readiness (Redis)",
+            "POST /ask": "hỏi agent — cần header X-API-Key, body {\"question\": \"...\"}",
+        },
+    }
+
+
 @app.get("/health")
 def health():
     """Liveness: process còn sống là 200 — không phụ thuộc Redis."""
