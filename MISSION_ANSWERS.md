@@ -400,4 +400,12 @@ Key design choices:
 
 ## AI log
 
-_Filled per checkpoint._
+| CP | Hỏi AI gì | AI làm gì | Tự kiểm tra thế nào |
+| --- | --- | --- | --- |
+| CP1 | Tìm anti-pattern trong `01-localhost-vs-production/develop/app.py`, so sánh với `production/` | Claude Code đọc code, chạy 2 bản app (cổng 8101/8111 vì 8000 đang bận), soạn câu trả lời | Số dòng đối chiếu bằng `cat -n`; output curl và log server là kết quả chạy thật |
+| CP2 | Trả lời câu hỏi Dockerfile, đo kích thước image, chạy stack Nginx | Claude Code build image develop/advanced, chạy container (cổng 8102) và compose `-p k5-day14-docker` | Kích thước lấy từ `docker images` (1.67GB → 240MB); curl qua Nginx trả 200 |
+| CP3 | Test 401/200/429, giải thích JWT, rate limit, cost guard | Claude Code chạy `04-api-gateway` (cổng 8103), vòng lặp curl tới 429, đọc `cost_guard.py` | Output `curl -i` thật, token đã che; dòng code được trích đúng file |
+| CP4 | Health/readiness, SIGTERM, scale 3 instance | Claude Code chạy app develop (cổng 8104), gửi SIGTERM khi đang có request, chạy compose `--scale agent=3` + `test_stateless.py` | Request vẫn 200 sau SIGTERM; 3 instance luân phiên; history giữ nguyên qua Redis |
+| CP5 | Hoàn thành các TODO trong `06-lab-complete/` | Claude Code viết `config.py`, `auth.py`, `redis_client.py`, `rate_limiter.py` (sorted set Redis), `cost_guard.py` (counter Redis theo ngày), `main.py` (log JSON, `/health`, `/ready`, shutdown), Dockerfile multi-stage non-root, compose, `railway.toml`, `render.yaml` | Chạy `check_production_ready.py` bản đầy đủ (có Docker) → `PASS 12/12`, 43/43 checks; không sửa script chấm |
+
+Ghi chú: cổng 8000 trên máy đang bị một process khác dùng nên các bài Part 1–5 chạy ở cổng khác (đã ghi rõ trong từng mục). Docker Hub có lúc trả 429 khi pull image, đã retry.
